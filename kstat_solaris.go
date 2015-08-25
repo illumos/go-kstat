@@ -1,5 +1,5 @@
 //
-// Package kstats provides access to the Solaris/OmniOS kstat(s) system
+// Package kstat provides access to the Solaris/OmniOS kstat(s) system
 // for user-level access to kernel statistics. For more documentation on
 // this, see kstat(1) and kstat(3kstat).
 //
@@ -260,6 +260,7 @@ func (k *KStats) Refresh() error {
 	if res == -1 {
 		return err
 	}
+	k.Snaptime = int64(k.ksp.ks_snaptime)
 	return nil
 }
 
