@@ -17,7 +17,7 @@
 // C kstat library is probably not thread or goroutine safe.
 //
 // General usage: call Open() to obtain a Token, then call GetNamed()
-// on it to obtain Stat(s) for specific kstats. If you want a number
+// on it to obtain Named(s) for specific kstats. If you want a number
 // of kstats for a module:inst:name trio, it is more efficient to
 // call .Lookup() to obtain a KStats and then call .GetNamed() on
 // it.
@@ -77,7 +77,7 @@ type Token struct {
 
 // Open returns a kstat Token that is used to obtain kstats. It corresponds
 // to kstat_open(). You should call .Close() when you're done and then not
-// use any KStats or Stats obtained through this token.
+// use any KStats or Nameds obtained through this token.
 //
 // (Failing to call .Close() will cause memory leaks.)
 func Open() (*Token, error) {
@@ -93,7 +93,7 @@ func Open() (*Token, error) {
 // anything and cannot be reopened.
 //
 // After a Token has been closed it remains safe to look at fields
-// on KStats and Stat objects obtained through the Token, but it is
+// on KStats and Named objects obtained through the Token, but it is
 // not safe to call methods on them other than String(); doing so
 // may cause memory corruption, although we try to avoid that.
 //
@@ -177,11 +177,11 @@ func (t *Token) Lookup(module string, instance int, name string) (*KStats, error
 	return k, nil
 }
 
-// GetNamed obtains the Stat representing a particular (named) kstat
+// GetNamed obtains the Named representing a particular (named) kstat
 // module:instance:name:statistic statistic.
 //
 // It is functionally equivalent to .Lookup() then KStats.GetNamed().
-func (t *Token) GetNamed(module string, instance int, name, stat string) (*Stat, error) {
+func (t *Token) GetNamed(module string, instance int, name, stat string) (*Named, error) {
 	stats, err := t.Lookup(module, instance, name)
 	if err != nil {
 		return nil, err
@@ -267,7 +267,7 @@ func (k *KStats) Refresh() error {
 // GetNamed obtains a particular named statistic from a kstat.
 //
 // It corresponds to kstat_data_lookup().
-func (k *KStats) GetNamed(name string) (*Stat, error) {
+func (k *KStats) GetNamed(name string) (*Named, error) {
 	if k.invalid() {
 		return nil, errors.New("invalid KStats or closed token")
 	}
@@ -290,10 +290,10 @@ func (k *KStats) GetNamed(name string) (*Stat, error) {
 	if r == nil || err != nil {
 		return nil, err
 	}
-	return newStat(k, (*C.struct_kstat_named)(r)), err
+	return newNamed(k, (*C.struct_kstat_named)(r)), err
 }
 
-// Stat represents a particular kstat element, ie the full
+// Named represents a particular kstat named statistic, ie the full
 //	module:instance:name:statistic
 // and its current value.
 //
@@ -301,7 +301,7 @@ func (k *KStats) GetNamed(name string) (*Stat, error) {
 // or UintVal is valid for any particular statistic; which one is
 // valid is determined by its Type. Generally you'll already know what
 // type a given kstat element is.
-type Stat struct {
+type Named struct {
 	Name string
 	Type NamedTypes
 
@@ -317,7 +317,7 @@ type Stat struct {
 	KStats *KStats
 }
 
-func (ks *Stat) String() string {
+func (ks *Named) String() string {
 	return fmt.Sprintf("%s:%d:%s:%s", ks.KStats.Module, ks.KStats.Instance, ks.KStats.Name, ks.Name)
 }
 
@@ -363,8 +363,8 @@ func (tp NamedTypes) String() string {
 
 // Create a new Stat from the kstat_named_t
 // We set the appropriate *Value field.
-func newStat(k *KStats, knp *C.struct_kstat_named) *Stat {
-	st := Stat{}
+func newNamed(k *KStats, knp *C.struct_kstat_named) *Named {
+	st := Named{}
 	st.KStats = k
 	st.Name = C.GoString((*C.char)(unsafe.Pointer(&knp.name)))
 	st.Type = NamedTypes(knp.data_type)
