@@ -121,9 +121,9 @@ import (
 type Token struct {
 	kc *C.struct_kstat_ctl
 
-	// ksm maps kstat_t pointers to our Go-level KStat for them.
+	// ksm maps kstat_t pointers to our Go-level KStats for them.
 	// kstat_t's stay constant over the lifetime of a token, so
-	// we want to keep unique KStat. This holds some Go-level
+	// we want to keep unique KStats. This holds some Go-level
 	// memory down, but I wave my hands.
 	ksm map[*C.struct_kstat]*KStat
 }
@@ -175,13 +175,8 @@ func (t *Token) All() []*KStat {
 		return n
 	}
 
-	r := t.kc.kc_chain
-	for {
-		if r == nil {
-			break
-		}
+	for r := t.kc.kc_chain; r != nil; r = r.ks_next {
 		n = append(n, newKStat(t, r))
-		r = r.ks_next
 	}
 	return n
 }
@@ -319,7 +314,7 @@ type KStat struct {
 //
 // This also has the responsibility of maintaining (and using) the
 // kstat_t to KStat mapping cache, so that we don't recreate new
-// KStat for the same kstat_t all the time.
+// KStats for the same kstat_t all the time.
 func newKStat(tok *Token, ks *C.struct_kstat) *KStat {
 	if kst, ok := tok.ksm[ks]; ok {
 		return kst
@@ -341,7 +336,6 @@ func newKStat(tok *Token, ks *C.struct_kstat) *KStat {
 	kst.Snaptime = int64(ks.ks_snaptime)
 
 	tok.ksm[ks] = &kst
-
 	return &kst
 }
 
@@ -387,7 +381,7 @@ func (k *KStat) Refresh() error {
 		return errors.New("invalid KStat or closed token")
 	}
 
-	res, err := C.kstat_read(k.tok.kc, k.ksp, unsafe.Pointer(nil))
+	res, err := C.kstat_read(k.tok.kc, k.ksp, nil)
 	if res == -1 {
 		return err
 	}
@@ -421,7 +415,7 @@ func (k *KStat) AllNamed() ([]*Named, error) {
 	for i := C.uint_t(0); i < k.ksp.ks_ndata; i++ {
 		ks := C.get_nth_named(k.ksp, i)
 		if ks == nil {
-			return nil, errors.New("internal error in AllNamed")
+			panic("get_nth_named returned surprise nil")
 		}
 		lst[i] = newNamed(k, ks)
 	}
