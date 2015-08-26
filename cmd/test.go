@@ -1,3 +1,8 @@
+//
+// This is a simple hacked together program to exercise the kstats
+// package. The statistics it inspects and fiddles around with are not
+// necessarily universal.
+//
 package main
 
 import (
@@ -23,7 +28,7 @@ func findNonNamed(tok *kstat.Token) {
 }
 
 func printStat(r *kstat.Named) {
-	fmt.Printf("%-30s %6s value ", r, r.Type)
+	fmt.Printf("%-30s %-6s value ", r, r.Type)
 	switch r.Type {
 	case kstat.String, kstat.CharData:
 		fmt.Printf("'%s'\n", r.StringVal)
@@ -45,7 +50,7 @@ func reporton(tok *kstat.Token, module string, instance int, name, stat string) 
 	printStat(r)
 }
 
-func allNamed(ks *kstat.KStats) {
+func allNamed(ks *kstat.KStat) {
 	lst, err := ks.AllNamed()
 	if err != nil {
 		log.Fatal("AllNamed error: ", err)

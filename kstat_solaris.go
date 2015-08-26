@@ -1,30 +1,68 @@
 //
-// Package kstat provides access to the Solaris/OmniOS kstat(s) system
-// for user-level access to kernel statistics. For more documentation on
-// this, see kstat(1) and kstat(3kstat).
+// Package kstat provides a Go interface to the Solaris/OmniOS
+// kstat(s) system for user-level access to a lot of kernel
+// statistics. For more documentation on kstats, see kstat(1) and
+// kstat(3kstat).
 //
-// At the moment this can only retrieve named counters/kstats, although
-// you can see the names and types of other kstats.
+// At the moment this can only retrieve what are called 'named' kstat
+// statistics, although you can see the names and types of other
+// kstats. Fortunately these are the most common and usually the most
+// interesting, although this limit does mean that you can't currently
+// retrieve disk IO stats. (This will change at some point.)
 //
-// This package may leak memory, especially since the Solaris kstat
-// manpage is not clear on the requirements here. However I believe
-// it's reasonably memory safe. It is possible to totally corrupt
-// memory with use-after-free errors if you do operations on kstats
-// after calling Token.Close().
+// General usage: call Open() to obtain a Token, then call GetNamed()
+// on it to obtain Named(s) for specific statistics. If you want a
+// number of statistics from the same module:inst:name triplet (eg
+// several network counters from the same network interface), it's
+// more efficient to call .Lookup() to obtain a KStat and then
+// repeatedly call .GetNamed() on it.
+//
+// The short version: a kstat is a collection of some related
+// statistics, eg disk IO stats for a disk or various network counters
+// for a particular network interface. A Token is a handle for a
+// collection of kstats. You go collection (Token) -> kstat (KStat) ->
+// specific statistic (Named) in order to retrieve the value of a
+// specific statistic.
 //
 // This is a cgo-based package. Cross compilation is up to you.
 // Goroutine safety is in no way guaranteed because the underlying
-// C kstat library is probably not thread or goroutine safe.
+// C kstat library is probably not thread or goroutine safe (and
+// there are some all-Go concurrency races involving .Close()).
 //
-// General usage: call Open() to obtain a Token, then call GetNamed()
-// on it to obtain Named(s) for specific kstats. If you want a number
-// of kstats for a module:inst:name trio, it is more efficient to
-// call .Lookup() to obtain a KStats and then call .GetNamed() on
-// it.
+// This package may leak memory, especially since the Solaris kstat
+// manpage is not clear on the requirements here. However I believe
+// it's reasonably memory safe. It's possible to totally corrupt
+// memory with use-after-free errors if you do operations on kstats
+// after calling Token.Close(), although we try to avoid that.
 //
-// TODO: support kstat_io (KSTAT_TYPE_IO) stats.
-// (There are also some KSTAT_TYPE_RAW stats, but not even kstat(1)
-// prints them.)
+// NOTE: this package is quite young. The API may well change as
+// I (and other people) gain more experience with it.
+//
+// PERFORMANCE
+//
+// In general this is not going to be as lean and mean as calling
+// C directly, partly because of intrinsic CGo overheads and partly
+// because we do more memory allocation and deallocation than a C
+// program would (partly because we prioritize not leaking memory).
+//
+// API LIMITATIONS AND TODOS
+//
+// At the moment we don't support anything except named kstats, which
+// are the most common ones. There are generic disk IO stats
+// (kstat_io_t, KSTAT_TYPE_IO) and kstat(1) knows about a number of
+// magic specific raw stats for eg unix:*:sysinfo and unix:*:vminfo
+// that are potentially interesting.
+//
+// (These specific raw stats are listed in cmd/stat/kstat/kstat.h
+// in the ks_raw_lookup array. See cmd/stat/kstat/kstat.c for how
+// they're interpreted.)
+//
+// Although we support refreshing specific kstats via
+// KStat.Refresh(), we don't support refreshing the entire collection
+// of kstats in order to pick up entirely new kstats and so on.  In
+// other words, we don't support kstat_chain_update(). At the moment
+// you must do this by closing your current Token and opening a new
+// one.
 //
 // Author: Chris Siebenmann
 // https://github.com/siebenmann/go-kstat
@@ -82,6 +120,12 @@ import (
 // Token is an access token for obtaining kstats.
 type Token struct {
 	kc *C.struct_kstat_ctl
+
+	// ksm maps kstat_t pointers to our Go-level KStat for them.
+	// kstat_t's stay constant over the lifetime of a token, so
+	// we want to keep unique KStat. This holds some Go-level
+	// memory down, but I wave my hands.
+	ksm map[*C.struct_kstat]*KStat
 }
 
 // Open returns a kstat Token that is used to obtain kstats. It corresponds
@@ -94,7 +138,9 @@ func Open() (*Token, error) {
 	if r == nil {
 		return nil, err
 	}
-	t := Token{r}
+	t := Token{}
+	t.kc = r
+	t.ksm = make(map[*C.struct_kstat]*KStat)
 	return &t, nil
 }
 
@@ -102,7 +148,7 @@ func Open() (*Token, error) {
 // anything and cannot be reopened.
 //
 // After a Token has been closed it remains safe to look at fields
-// on KStats and Named objects obtained through the Token, but it is
+// on KStat and Named objects obtained through the Token, but it is
 // not safe to call methods on them other than String(); doing so
 // may cause memory corruption, although we try to avoid that.
 //
@@ -113,6 +159,9 @@ func (t *Token) Close() error {
 	}
 	res, err := C.kstat_close(t.kc)
 	t.kc = nil
+	// clear the map to drop all references to KStats.
+	t.ksm = make(map[*C.struct_kstat]*KStat)
+
 	if res != 0 {
 		return err
 	}
@@ -120,8 +169,8 @@ func (t *Token) Close() error {
 }
 
 // All returns an array of all available KStats.
-func (t *Token) All() []*KStats {
-	n := []*KStats{}
+func (t *Token) All() []*KStat {
+	n := []*KStat{}
 	if t.kc == nil {
 		return n
 	}
@@ -131,7 +180,7 @@ func (t *Token) All() []*KStats {
 		if r == nil {
 			break
 		}
-		n = append(n, newKStats(t, r))
+		n = append(n, newKStat(t, r))
 		r = r.ks_next
 	}
 	return n
@@ -159,8 +208,8 @@ func maybeFree(cs *C.char) {
 // Lookup() corresponds to kstat_lookup().
 //
 // Right now you cannot do anything useful with non-named kstats
-// (as we don't provide any method to retrieve their data).
-func (t *Token) Lookup(module string, instance int, name string) (*KStats, error) {
+// (as we don't provide any way to retrieve their data).
+func (t *Token) Lookup(module string, instance int, name string) (*KStat, error) {
 	if t == nil || t.kc == nil {
 		return nil, errors.New("Token not valid or closed")
 	}
@@ -175,10 +224,14 @@ func (t *Token) Lookup(module string, instance int, name string) (*KStats, error
 		return nil, err
 	}
 
-	k := newKStats(t, r)
+	k := newKStat(t, r)
 	// People rarely look up kstats to not use them, so we immediately
 	// attempt to kstat_read() the data. If this fails, we don't return
-	// the kstat.
+	// the kstat. However, we don't scrub it from the kstat_t mapping
+	// that the Token maintains; we have no reason to believe that it
+	// needs to be remade. Our return of nil is a convenience to avoid
+	// problems in callers.
+	// TODO: this may be a mistake in the API.
 	err = k.Refresh()
 	if err != nil {
 		return nil, err
@@ -189,7 +242,7 @@ func (t *Token) Lookup(module string, instance int, name string) (*KStats, error
 // GetNamed obtains the Named representing a particular (named) kstat
 // module:instance:name:statistic statistic.
 //
-// It is functionally equivalent to .Lookup() then KStats.GetNamed().
+// It is equivalent to .Lookup() then KStat.GetNamed().
 func (t *Token) GetNamed(module string, instance int, name, stat string) (*Named, error) {
 	stats, err := t.Lookup(module, instance, name)
 	if err != nil {
@@ -200,10 +253,41 @@ func (t *Token) GetNamed(module string, instance int, name, stat string) (*Named
 
 // -----
 
-// KStats is the access handle for the collection of statistics for a
+// KSType is the type of the data in a KStat.
+type KSType int
+
+// The different types of data that a KStat may contain, ie these
+// are the value of a KStat.Type. We currently only support getting
+// Named statistics.
+const (
+	RawStat   = C.KSTAT_TYPE_RAW
+	NamedStat = C.KSTAT_TYPE_NAMED
+	IntrStat  = C.KSTAT_TYPE_INTR
+	IoStat    = C.KSTAT_TYPE_IO
+	TimerStat = C.KSTAT_TYPE_TIMER
+)
+
+func (tp KSType) String() string {
+	switch tp {
+	case RawStat:
+		return "raw"
+	case NamedStat:
+		return "named"
+	case IntrStat:
+		return "interrupt"
+	case IoStat:
+		return "io"
+	case TimerStat:
+		return "timer"
+	default:
+		return fmt.Sprintf("kstat_type:%d", tp)
+	}
+}
+
+// KStat is the access handle for the collection of statistics for a
 // particular module:instance:name kstat.
 //
-type KStats struct {
+type KStat struct {
 	Module   string
 	Instance int
 	Name     string
@@ -212,8 +296,9 @@ type KStats struct {
 	// ':class' statistic.
 	Class string
 	// Type is the type of kstat. Named kstats are the only type
-	// actively supported.
-	Type int
+	// that can currently have their kstats data interpreted to
+	// extract the stat values.
+	Type KSType
 
 	// Creation time of a kstat in nanoseconds since sometime.
 	// See gethrtime(3) and kstat(3kstat).
@@ -221,7 +306,8 @@ type KStats struct {
 	// Snaptime is what kstat(1) reports as 'snaptime', the time
 	// that this data was obtained. As with Crtime, it is in
 	// nanoseconds since some arbitrary point in time.
-	// Snaptime may not be valid until .Refresh() has been called.
+	// Snaptime may not be valid until .Refresh() or .GetNamed()
+	// has been called.
 	Snaptime int64
 
 	ksp *C.struct_kstat
@@ -229,9 +315,17 @@ type KStats struct {
 	tok *Token
 }
 
-// internal constructor.
-func newKStats(tok *Token, ks *C.struct_kstat) *KStats {
-	kst := KStats{}
+// newKStat is our internal KStat constructor.
+//
+// This also has the responsibility of maintaining (and using) the
+// kstat_t to KStat mapping cache, so that we don't recreate new
+// KStat for the same kstat_t all the time.
+func newKStat(tok *Token, ks *C.struct_kstat) *KStat {
+	if kst, ok := tok.ksm[ks]; ok {
+		return kst
+	}
+
+	kst := KStat{}
 	kst.ksp = ks
 	kst.tok = tok
 
@@ -239,23 +333,28 @@ func newKStats(tok *Token, ks *C.struct_kstat) *KStats {
 	kst.Module = C.GoString((*C.char)(unsafe.Pointer(&ks.ks_module)))
 	kst.Name = C.GoString((*C.char)(unsafe.Pointer(&ks.ks_name)))
 	kst.Class = C.GoString((*C.char)(unsafe.Pointer(&ks.ks_class)))
-	kst.Type = int(ks.ks_type)
+	kst.Type = KSType(ks.ks_type)
 	kst.Crtime = int64(ks.ks_crtime)
+	// TODO: we assume that ks_snaptime cannot be updated outside
+	// of our control (in .Refresh). Is this true, or does Solaris
+	// update it behind our backs?
 	kst.Snaptime = int64(ks.ks_snaptime)
+
+	tok.ksm[ks] = &kst
 
 	return &kst
 }
 
 // invalid is a desperate attempt to keep usage errors from causing
 // memory corruption. Don't count on it.
-func (k *KStats) invalid() bool {
+func (k *KStat) invalid() bool {
 	return k == nil || k.ksp == nil || k.tok == nil || k.tok.kc == nil
 }
 
 // setup does validity checks and setup, such as loading data via Refresh().
-func (k *KStats) setup() error {
+func (k *KStat) setup() error {
 	if k.invalid() {
-		return errors.New("invalid KStats or closed token")
+		return errors.New("invalid KStat or closed token")
 	}
 
 	if k.ksp.ks_type != C.KSTAT_TYPE_NAMED {
@@ -271,17 +370,21 @@ func (k *KStats) setup() error {
 	return nil
 }
 
-func (k *KStats) String() string {
+func (k *KStat) String() string {
 	return fmt.Sprintf("%s:%d:%s (%s)", k.Module, k.Instance, k.Name, k.Class)
 }
 
-// Refresh the statistics data for a KStats.
+// Refresh the statistics data for a KStat.
+//
+// Note that this does not update any existing Named objects for
+// statistics from this KStat. You must re-do .GetNamed() to get
+// new ones in order to see any updates.
 //
 // Under the hood this does a kstat_read(). You don't need to call it
-// explicitly before using a KStats.
-func (k *KStats) Refresh() error {
+// explicitly before obtaining statistics from a KStat.
+func (k *KStat) Refresh() error {
 	if k.invalid() {
-		return errors.New("invalid KStats or closed token")
+		return errors.New("invalid KStat or closed token")
 	}
 
 	res, err := C.kstat_read(k.tok.kc, k.ksp, unsafe.Pointer(nil))
@@ -295,7 +398,7 @@ func (k *KStats) Refresh() error {
 // GetNamed obtains a particular named statistic from a kstat.
 //
 // It corresponds to kstat_data_lookup().
-func (k *KStats) GetNamed(name string) (*Named, error) {
+func (k *KStat) GetNamed(name string) (*Named, error) {
 	if err := k.setup(); err != nil {
 		return nil, err
 	}
@@ -309,8 +412,8 @@ func (k *KStats) GetNamed(name string) (*Named, error) {
 }
 
 // AllNamed returns an array of all named statistics for a particular
-// KStats. Entries are returned in no particular order.
-func (k *KStats) AllNamed() ([]*Named, error) {
+// named-type KStat. Entries are returned in no particular order.
+func (k *KStat) AllNamed() ([]*Named, error) {
 	if err := k.setup(); err != nil {
 		return nil, err
 	}
@@ -332,10 +435,11 @@ func (k *KStats) AllNamed() ([]*Named, error) {
 // Name and Type are always valid, but only one of StringVal, IntVal,
 // or UintVal is valid for any particular statistic; which one is
 // valid is determined by its Type. Generally you'll already know what
-// type a given kstat element is.
+// type a given named kstat statistic is; I don't believe Solaris
+// changes their type once they're defined.
 type Named struct {
 	Name string
-	Type NamedTypes
+	Type NamedType
 
 	// Only one of the following values is valid; the others are zero
 	// values.
@@ -345,18 +449,20 @@ type Named struct {
 	IntVal    int64
 	UintVal   uint64
 
-	// Pointer to the parent KStats, for access to the full name.
-	KStats *KStats
+	// Pointer to the parent KStat, for access to the full name
+	// and the snaptime/crtime associated with this Named.
+	KStat *KStat
 }
 
 func (ks *Named) String() string {
-	return fmt.Sprintf("%s:%d:%s:%s", ks.KStats.Module, ks.KStats.Instance, ks.KStats.Name, ks.Name)
+	return fmt.Sprintf("%s:%d:%s:%s", ks.KStat.Module, ks.KStat.Instance, ks.KStat.Name, ks.Name)
 }
 
-// NamedTypes represents the various types of named kstat elements.
-type NamedTypes int
+// NamedType represents the various types of named kstat statistics.
+type NamedType int
 
-// Various NamedTypes
+// The different types of data that a named kstat statistic can be
+// (ie, these are the potential values of Named.Type).
 const (
 	CharData = C.KSTAT_DATA_CHAR
 	Int32    = C.KSTAT_DATA_INT32
@@ -374,7 +480,7 @@ const (
 	// but labels them as obsolete.
 )
 
-func (tp NamedTypes) String() string {
+func (tp NamedType) String() string {
 	switch tp {
 	case CharData:
 		return "char"
@@ -389,17 +495,17 @@ func (tp NamedTypes) String() string {
 	case String:
 		return "string"
 	default:
-		return fmt.Sprintf("type-%d", tp)
+		return fmt.Sprintf("named_type-%d", tp)
 	}
 }
 
 // Create a new Stat from the kstat_named_t
 // We set the appropriate *Value field.
-func newNamed(k *KStats, knp *C.struct_kstat_named) *Named {
+func newNamed(k *KStat, knp *C.struct_kstat_named) *Named {
 	st := Named{}
-	st.KStats = k
+	st.KStat = k
 	st.Name = C.GoString((*C.char)(unsafe.Pointer(&knp.name)))
-	st.Type = NamedTypes(knp.data_type)
+	st.Type = NamedType(knp.data_type)
 
 	switch st.Type {
 	case String:
