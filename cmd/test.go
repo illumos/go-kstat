@@ -22,22 +22,37 @@ func findNonNamed(tok *kstat.Token) {
 	}
 }
 
+func printStat(r *kstat.Named) {
+	fmt.Printf("%-30s %6s value ", r, r.Type)
+	switch r.Type {
+	case kstat.String, kstat.CharData:
+		fmt.Printf("'%s'\n", r.StringVal)
+	case kstat.Int32, kstat.Int64:
+		fmt.Printf("%16d\n", r.IntVal)
+	case kstat.Uint32, kstat.Uint64:
+		fmt.Printf("%16d\n", r.UintVal)
+	default:
+		fmt.Printf("UNKNOWN\n")
+	}
+}
+
 func reporton(tok *kstat.Token, module string, instance int, name, stat string) {
 	r, err := tok.GetNamed(module, instance, name, stat)
 	if err != nil {
 		log.Printf("reporton: '%s:%d:%s:%s' error: %s\n", module, instance, name, stat, err)
 		return
 	}
-	fmt.Printf("%s %s value ", r, r.Type)
-	switch r.Type {
-	case kstat.String, kstat.CharData:
-		fmt.Printf("'%s'\n", r.StringVal)
-	case kstat.Int32, kstat.Int64:
-		fmt.Printf("%d\n", r.IntVal)
-	case kstat.Uint32, kstat.Uint64:
-		fmt.Printf("%d\n", r.UintVal)
-	default:
-		fmt.Printf("UNKNOWN\n")
+	printStat(r)
+}
+
+func allNamed(ks *kstat.KStats) {
+	lst, err := ks.AllNamed()
+	if err != nil {
+		log.Fatal("AllNamed error: ", err)
+	}
+
+	for _, st := range lst {
+		printStat(st)
 	}
 }
 
@@ -75,6 +90,14 @@ func main() {
 	reporton(tok, "sd", 0, "sd0", "random")
 	reporton(tok, "fred", -1, "james", "bad")
 	reporton(tok, "cpu_info", -1, "cpu_info0", "nosuch")
+
+	fmt.Println("")
+	t, err = tok.Lookup("cpu_info", -1, "cpu_info0")
+	if err != nil {
+		log.Fatal("cpu_info lookup error: ", err)
+	}
+	allNamed(t)
+	fmt.Println("")
 
 	err = tok.Close()
 	if err != nil {

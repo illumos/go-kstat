@@ -62,6 +62,15 @@ package kstat
 //		return knp->value.i64;
 // }
 //
+// /* Let's not try to do C pointer arithmetic in Go and get it wrong */
+// kstat_named_t *get_nth_named(kstat_t *ks, uint_t n) {
+//	kstat_named_t *knp;
+//	if (!ks || !ks->ks_data || ks->ks_type != KSTAT_TYPE_NAMED || n >= ks->ks_ndata)
+//		return NULL;
+//	knp = KSTAT_NAMED_PTR(ks);
+//	return knp + n;
+// }
+//
 import "C"
 
 import (
@@ -243,6 +252,25 @@ func (k *KStats) invalid() bool {
 	return k == nil || k.ksp == nil || k.tok == nil || k.tok.kc == nil
 }
 
+// setup does validity checks and setup, such as loading data via Refresh().
+func (k *KStats) setup() error {
+	if k.invalid() {
+		return errors.New("invalid KStats or closed token")
+	}
+
+	if k.ksp.ks_type != C.KSTAT_TYPE_NAMED {
+		return fmt.Errorf("kstat %s (type %d) is not a named kstat", k, k.ksp.ks_type)
+	}
+
+	// Do the initial load of the data if necessary.
+	if k.ksp.ks_data == nil {
+		if err := k.Refresh(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (k *KStats) String() string {
 	return fmt.Sprintf("%s:%d:%s (%s)", k.Module, k.Instance, k.Name, k.Class)
 }
@@ -268,22 +296,9 @@ func (k *KStats) Refresh() error {
 //
 // It corresponds to kstat_data_lookup().
 func (k *KStats) GetNamed(name string) (*Named, error) {
-	if k.invalid() {
-		return nil, errors.New("invalid KStats or closed token")
+	if err := k.setup(); err != nil {
+		return nil, err
 	}
-
-	if k.ksp.ks_type != C.KSTAT_TYPE_NAMED {
-		return nil, fmt.Errorf("kstat %s (type %d) is not a named kstat", k, k.ksp.ks_type)
-	}
-
-	// Do the initial load of the data if necessary.
-	if k.ksp.ks_data == nil {
-		err := k.Refresh()
-		if err != nil {
-			return nil, err
-		}
-	}
-
 	ns := C.CString(name)
 	r, err := C.kstat_data_lookup(k.ksp, ns)
 	C.free(unsafe.Pointer(ns))
@@ -291,6 +306,23 @@ func (k *KStats) GetNamed(name string) (*Named, error) {
 		return nil, err
 	}
 	return newNamed(k, (*C.struct_kstat_named)(r)), err
+}
+
+// AllNamed returns an array of all named statistics for a particular
+// KStats. Entries are returned in no particular order.
+func (k *KStats) AllNamed() ([]*Named, error) {
+	if err := k.setup(); err != nil {
+		return nil, err
+	}
+	lst := make([]*Named, k.ksp.ks_ndata)
+	for i := C.uint_t(0); i < k.ksp.ks_ndata; i++ {
+		ks := C.get_nth_named(k.ksp, i)
+		if ks == nil {
+			return nil, errors.New("internal error in AllNamed")
+		}
+		lst[i] = newNamed(k, ks)
+	}
+	return lst, nil
 }
 
 // Named represents a particular kstat named statistic, ie the full
