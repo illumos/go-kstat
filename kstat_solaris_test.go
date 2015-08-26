@@ -260,3 +260,40 @@ func TestSameKStat(t *testing.T) {
 	}
 	stop(t, tok)
 }
+
+func getnamed(t *testing.T, tok *kstat.Token, module, name, stat string) *kstat.Named {
+	n, err := tok.GetNamed(module, -1, name, stat)
+	if err != nil {
+		t.Fatalf("getnamed %s:-1:%s:%s failed: %s", module, name, stat, err)
+	}
+	return n
+}
+
+// Test named kstat stats other than Uint*
+//
+// We assume there will always be a cpu_info:*:cpu_info0 kstat, although
+// maybe there are machines with CPUs but no 0. I wave my hands.
+func TestNamedTypes(t *testing.T) {
+	tok := start(t)
+
+	n := getnamed(t, tok, "cpu_info", "cpu_info0", "state")
+	if n.Type != kstat.CharData || n.StringVal == "" || n.UintVal != 0 || n.IntVal != 0 {
+		t.Fatalf("bad type or value for %s %s: %#v", n, n.Type, n)
+	}
+
+	n = getnamed(t, tok, "cpu_info", "cpu_info0", "brand")
+	if n.Type != kstat.String || n.StringVal == "" || n.UintVal != 0 || n.IntVal != 0 {
+		t.Fatalf("bad type or value for %s %s: %#v", n, n.Type, n)
+	}
+
+	n = getnamed(t, tok, "cpu_info", "cpu_info0", "family")
+	if n.Type != kstat.Int32 || n.StringVal != "" || n.UintVal != 0 || n.IntVal == 0 {
+		t.Fatalf("bad type or value for %s %s: %#v", n, n.Type, n)
+	}
+
+	n = getnamed(t, tok, "cpu_info", "cpu_info0", "clock_MHz")
+	if n.Type != kstat.Int64 || n.StringVal != "" || n.UintVal != 0 || n.IntVal == 0 {
+		t.Fatalf("bad type or value for %s %s: %#v", n, n.Type, n)
+	}
+	stop(t, tok)
+}
