@@ -1,5 +1,5 @@
 //
-// Package kstat provides a Go interface to the Solaris/OmniOS
+// The kstat package provides a Go interface to the Solaris/OmniOS
 // kstat(s) system for user-level access to a lot of kernel
 // statistics. For more documentation on kstats, see kstat(1) and
 // kstat(3kstat).
@@ -145,8 +145,10 @@ func maybeFree(cs *C.char) {
 
 // Lookup looks up a particular kstat. module and name may be "" and
 // instance may be -1 to mean 'the first one that kstats can find'.
+// It also refreshes (or retrieves) the kstat's data and thus sets
+// Snaptime.
 //
-// Lookup() corresponds to kstat_lookup().
+// Lookup() corresponds to kstat_lookup() *plus kstat_read()*.
 //
 // Right now you cannot do anything useful with non-named kstats
 // (as we don't provide any way to retrieve their data).
@@ -166,6 +168,7 @@ func (t *Token) Lookup(module string, instance int, name string) (*KStat, error)
 	}
 
 	k := newKStat(t, r)
+
 	// People rarely look up kstats to not use them, so we immediately
 	// attempt to kstat_read() the data. If this fails, we don't return
 	// the kstat. However, we don't scrub it from the kstat_t mapping
@@ -173,6 +176,11 @@ func (t *Token) Lookup(module string, instance int, name string) (*KStat, error)
 	// needs to be remade. Our return of nil is a convenience to avoid
 	// problems in callers.
 	// TODO: this may be a mistake in the API.
+	//
+	// NOTE: this means that calling Lookup() on an existing KStat
+	// (either directly or via tok.GetNamed()) has the effect of
+	// updating its statistics data to the current time. Right now
+	// we consider this a feature.
 	err = k.Refresh()
 	if err != nil {
 		return nil, err
@@ -181,7 +189,9 @@ func (t *Token) Lookup(module string, instance int, name string) (*KStat, error)
 }
 
 // GetNamed obtains the Named representing a particular (named) kstat
-// module:instance:name:statistic statistic.
+// module:instance:name:statistic statistic. It always returns current
+// data for the kstat statistic, even if it's called repeatedly for the
+// same statistic.
 //
 // It is equivalent to .Lookup() then KStat.GetNamed().
 func (t *Token) GetNamed(module string, instance int, name, stat string) (*Named, error) {
@@ -201,11 +211,11 @@ type KSType int
 // are the value of a KStat.Type. We currently only support getting
 // Named statistics.
 const (
-	RawStat   = C.KSTAT_TYPE_RAW
-	NamedStat = C.KSTAT_TYPE_NAMED
-	IntrStat  = C.KSTAT_TYPE_INTR
-	IoStat    = C.KSTAT_TYPE_IO
-	TimerStat = C.KSTAT_TYPE_TIMER
+	RawStat   KSType = C.KSTAT_TYPE_RAW
+	NamedStat KSType = C.KSTAT_TYPE_NAMED
+	IntrStat  KSType = C.KSTAT_TYPE_INTR
+	IoStat    KSType = C.KSTAT_TYPE_IO
+	TimerStat KSType = C.KSTAT_TYPE_TIMER
 )
 
 func (tp KSType) String() string {
@@ -276,10 +286,20 @@ func newKStat(tok *Token, ks *C.struct_kstat) *KStat {
 	kst.Class = C.GoString((*C.char)(unsafe.Pointer(&ks.ks_class)))
 	kst.Type = KSType(ks.ks_type)
 	kst.Crtime = int64(ks.ks_crtime)
-	// TODO: we assume that ks_snaptime cannot be updated outside
-	// of our control (in .Refresh). Is this true, or does Solaris
-	// update it behind our backs?
-	kst.Snaptime = int64(ks.ks_snaptime)
+
+	// Inside the kernel, the ks_snaptime of a kstat is of course
+	// a global thing. This 'global' snaptime is copied to user
+	// level as part of the kstat header(s) on kstat_open(), which
+	// means that kstats that have never been kstat_read() by us
+	// are almost certain to have a non-zero ks_snaptime (because
+	// someone, somewhere, will have read them since the system
+	// booted, eg 'kstat -p | grep ...'  reads all kstats).
+	// Because this ks_snaptime is not useful, we don't copy it
+	// to Snaptime; instead we leave Snaptime unset (zero) as
+	// an explicit signal that this KStat has never had its data
+	// read.
+	//
+	//kst.Snaptime = int64(ks.ks_snaptime)
 
 	tok.ksm[ks] = &kst
 	return &kst
@@ -389,8 +409,14 @@ type Named struct {
 	IntVal    int64
 	UintVal   uint64
 
+	// The Snaptime this Named was obtained. Note that while you
+	// use the parent KStat's Crtime, you cannot use its Snaptime.
+	// The KStat may have been refreshed since this Named was
+	// created, which updates the Snaptime.
+	Snaptime int64
+
 	// Pointer to the parent KStat, for access to the full name
-	// and the snaptime/crtime associated with this Named.
+	// and the crtime associated with this Named.
 	KStat *KStat
 }
 
@@ -404,12 +430,12 @@ type NamedType int
 // The different types of data that a named kstat statistic can be
 // (ie, these are the potential values of Named.Type).
 const (
-	CharData = C.KSTAT_DATA_CHAR
-	Int32    = C.KSTAT_DATA_INT32
-	Uint32   = C.KSTAT_DATA_UINT32
-	Int64    = C.KSTAT_DATA_INT64
-	Uint64   = C.KSTAT_DATA_UINT64
-	String   = C.KSTAT_DATA_STRING
+	CharData NamedType = C.KSTAT_DATA_CHAR
+	Int32    NamedType = C.KSTAT_DATA_INT32
+	Uint32   NamedType = C.KSTAT_DATA_UINT32
+	Int64    NamedType = C.KSTAT_DATA_INT64
+	Uint64   NamedType = C.KSTAT_DATA_UINT64
+	String   NamedType = C.KSTAT_DATA_STRING
 
 	// CharData is found in StringVal. At the moment we assume that
 	// it is a real string, because this matches how it seems to be
@@ -446,6 +472,7 @@ func newNamed(k *KStat, knp *C.struct_kstat_named) *Named {
 	st.KStat = k
 	st.Name = C.GoString((*C.char)(unsafe.Pointer(&knp.name)))
 	st.Type = NamedType(knp.data_type)
+	st.Snaptime = k.Snaptime
 
 	switch st.Type {
 	case String:

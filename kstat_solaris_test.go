@@ -16,6 +16,8 @@ import (
 )
 
 // Utility functions
+// all of these are used for operations that are not supposed to fail,
+// because the error message is generic.
 
 // kstat.Open(); fail on error
 func start(t *testing.T) *kstat.Token {
@@ -41,6 +43,15 @@ func lookup(t *testing.T, tok *kstat.Token, module, name string) *kstat.KStat {
 		t.Fatalf("lookup failure on %s:-1:%s: %s", module, name, err)
 	}
 	return ks
+}
+
+// KStat.GetNamed(); fail on error
+func kgetnamed(t *testing.T, ks *kstat.KStat, stat string) *kstat.Named {
+	n, err := ks.GetNamed(stat)
+	if err != nil {
+		t.Fatalf("getting '%s' from %s: %s", stat, ks, err)
+	}
+	return n
 }
 
 // Silliest little test possible.
@@ -76,6 +87,8 @@ func TestLookupNamed(t *testing.T) {
 	}
 
 	// we cannot look at UintVal because it may or may not change (!?)
+	// answer: tok.GetNamed() does tok.Lookup() which does ks.Refresh()
+	// behind the scenes, which updates the kstat data.
 	if n1.Type != n.Type || n1.StringVal != n.StringVal || n1.IntVal != n.IntVal {
 		t.Fatalf("inconsistent values between original and tok.GetNamed: %#v vs %#v", n, n1)
 	}
@@ -91,30 +104,66 @@ func TestLookupNamed(t *testing.T) {
 // Note that picking eg cpu:0:sys:syscalls is risky, because it's a
 // per-CPU statistic and in a multi-cpu system that CPU may not see
 // syscalls ... or it may.
-//
-// kstats apparently may change even without a second kstat_read()
-// call (?! as they say), so this is not a definitive test that
-// KStat.Refresh() actually does anything. But we do what we can.
 func TestRefresh(t *testing.T) {
 	tok := start(t)
 	ks := lookup(t, tok, "unix", "system_misc")
-	n, err := ks.GetNamed("clk_intr")
-	if err != nil {
-		t.Fatalf("1st getting %s 'clk_intr' failed: %s", ks, err)
-	}
+	n := kgetnamed(t, ks, "clk_intr")
 	if n.Type != kstat.Uint32 {
 		t.Fatalf("%s has wrong type: %s", n, n.Type)
 	}
+	osnap := ks.Snaptime
 
 	time.Sleep(time.Second * 1)
 
-	ks.Refresh()
-	n2, err := ks.GetNamed("clk_intr")
+	err := ks.Refresh()
 	if err != nil {
-		t.Fatalf("2nd getting %s 'clk_intr' failed: %s", ks, err)
+		t.Fatalf("%s refresh error: %s", ks, err)
 	}
+	if osnap == ks.Snaptime {
+		t.Fatalf("%s snaptime did not change: %d", ks, osnap)
+	}
+
+	n2 := kgetnamed(t, ks, "clk_intr")
 	if n2.UintVal == n.UintVal {
 		t.Fatalf("clk_intr count did not change: still %d\n", n2.UintVal)
+	}
+	stop(t, tok)
+}
+
+// Explicitly test that a .Lookup() calls .Refresh() aka kstat_read()
+// and so sets ks.Snaptime
+func TestLookupSnaptime(t *testing.T) {
+	tok := start(t)
+	ks := lookup(t, tok, "cpu", "sys")
+	if ks.Snaptime <= 0 {
+		t.Fatalf("%s Snaptime is zero (unset) after .Lookup()", ks)
+	}
+	stop(t, tok)
+}
+
+// General testing of Snaptime(s) not updating and then updating.
+func TestSnaptimes(t *testing.T) {
+	tok := start(t)
+	ks := lookup(t, tok, "cpu", "sys")
+	osnap := ks.Snaptime
+	n := kgetnamed(t, ks, "syscall")
+	if osnap != ks.Snaptime {
+		t.Fatalf("getting %s changed KStat snaptime: %d vs %d", n, osnap, ks.Snaptime)
+	}
+	if n.Snaptime != ks.Snaptime {
+		t.Fatalf("%s snaptime not KStat snaptime: %d vs %d", n, n.Snaptime, ks.Snaptime)
+	}
+	n2 := kgetnamed(t, ks, "sysread")
+	if n2.Snaptime != n.Snaptime {
+		t.Fatalf("%s snaptime not %s snaptime: %d vs %d", n2, n, n2.Snaptime, n.Snaptime)
+	}
+
+	err := ks.Refresh()
+	if err != nil {
+		t.Fatalf("%s Refresh() error: %s", ks, err)
+	}
+	if osnap == ks.Snaptime {
+		t.Fatalf("%s Snaptime not updated after Refresh", ks)
 	}
 	stop(t, tok)
 }

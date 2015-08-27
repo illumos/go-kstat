@@ -11,11 +11,13 @@
 // retrieve disk IO stats. (This will change at some point.)
 //
 // General usage: call Open() to obtain a Token, then call GetNamed()
-// on it to obtain Named(s) for specific statistics. If you want a
-// number of statistics from the same module:inst:name triplet (eg
-// several network counters from the same network interface), it's
-// more efficient to call .Lookup() to obtain a KStat and then
-// repeatedly call .GetNamed() on it.
+// on it to obtain Named(s) for specific statistics. Note that this
+// always gives you the very latest value for the statistic. If you
+// want a number of statistics from the same module:inst:name triplet
+// (eg several network counters from the same network interface) and
+// you want them all to have been gathered at the same time, you need
+// to call .Lookup() to obtain a KStat and then repeatedly call its
+// .GetNamed() (this is also slightly more efficient).
 //
 // The short version: a kstat is a collection of some related
 // statistics, eg disk IO stats for a disk or various network counters
