@@ -67,6 +67,7 @@ func main() {
 
 	tok, err := kstat.Open()
 	if err != nil {
+		log.Fatal("tok open: ", err)
 	}
 	t, err := tok.Lookup("", -1, "e1000g1")
 	if err != nil {
