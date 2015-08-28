@@ -11,6 +11,7 @@ package kstat_test
 import (
 	"testing"
 	"time"
+	"unsafe"
 
 	"github.com/siebenmann/go-kstat"
 )
@@ -220,7 +221,8 @@ func TestAlls(t *testing.T) {
 
 // Test that we cannot do GetNamed() or AllNamed() on things that are
 // not named stats.
-// We use unix:0:vminfo as our test kstat for this.
+// We use unix:0:vminfo as our test kstat for this, and also try to
+// test against sd:0:sd0 (which should be an IoStat).
 func TestNotNamed(t *testing.T) {
 	tok := start(t)
 	ks := lookup(t, tok, "unix", "vminfo")
@@ -237,6 +239,15 @@ func TestNotNamed(t *testing.T) {
 	_, err = ks.AllNamed()
 	if err == nil {
 		t.Fatalf("ks.AllNamed() on %s succeeded", ks)
+	}
+
+	// Checking for success on lookup is paranoid, but ehh.
+	ks, err = tok.Lookup("sd", 0, "sd0")
+	if err != nil && ks.Type == kstat.IoStat {
+		_, err = ks.AllNamed()
+		if err == nil {
+			t.Fatalf("ks.AllNamed on %s succeeded", ks)
+		}
 	}
 	stop(t, tok)
 }
@@ -310,6 +321,7 @@ func TestSameKStat(t *testing.T) {
 	stop(t, tok)
 }
 
+// Token.GetNamed; fail on error
 func getnamed(t *testing.T, tok *kstat.Token, module, name, stat string) *kstat.Named {
 	n, err := tok.GetNamed(module, -1, name, stat)
 	if err != nil {
@@ -345,4 +357,119 @@ func TestNamedTypes(t *testing.T) {
 		t.Fatalf("bad type or value for %s %s: %#v", n, n.Type, n)
 	}
 	stop(t, tok)
+}
+
+//
+// Find and retrieve an IO kstat.
+// We try to look for stats having some non-zero value.
+//
+// Since apparently sd:0:sd0 is guaranteed to be the boot disk, we
+// also specifically retrieve it and try to verify that as many fields
+// as possible are good.
+func TestDiskStat(t *testing.T) {
+	tok := start(t)
+	tlst := tok.All()
+	foundone := false
+	nonzero := false
+	for _, ks := range tlst {
+		if ks.Type != kstat.IoStat {
+			continue
+		}
+		foundone = true
+		io, err := ks.GetIO()
+		if err != nil {
+			t.Fatalf("%s GetIO failed: %s", ks, err)
+		}
+		if ks.Snaptime == 0 {
+			t.Fatalf("%s Snaptime is still 0", ks)
+		}
+		if io.Reads > 0 || io.Writes > 0 {
+			nonzero = true
+			break
+		}
+	}
+	if !foundone {
+		t.Fatalf("failed to find a single IO KStat, should be impossible?")
+	}
+	if !nonzero {
+		t.Fatalf("could not find a single IO KStat with read or write activity, should be impossible?")
+	}
+
+	// Okay, try sd:0:sd0 specifically.
+	ks := lookup(t, tok, "sd", "sd0")
+	io, err := ks.GetIO()
+	if err != nil {
+		t.Fatalf("%s GetIO error: %s", io, err)
+	}
+	// We assume the boot disk has to have some IO, right?
+	if io.Nread == 0 || io.Nwritten == 0 || io.Rlastupdate == 0 || io.Rlentime == 0 || io.Wtime == 0 {
+		t.Fatalf("%s IO values are odd: %+v", ks, io)
+	}
+
+	stop(t, tok)
+}
+
+// GetIO on a KStat for a closed token should fail, as other things do.
+func TestDiskAfterClose(t *testing.T) {
+	tok := start(t)
+	ks := lookup(t, tok, "sd", "sd0")
+	if ks.Type != kstat.IoStat {
+		t.Fatalf("%s not an IoStat, is a %s", ks, ks.Type)
+	}
+	stop(t, tok)
+	_, err := ks.GetIO()
+	if err == nil {
+		t.Fatalf("%s GetIO succeeded after Close", ks)
+	}
+}
+
+// Calling GetIO should update the KStat Snaptime, because it should
+// refresh the data. We check since we explicitly guarantee this in
+// the documentation.
+func TestDiskSnaptime(t *testing.T) {
+	tok := start(t)
+	ks := lookup(t, tok, "sd", "sd0")
+	osnap := ks.Snaptime
+	_, err := ks.GetIO()
+	if err != nil {
+		t.Fatalf("%s GetIO failed: %s", ks, err)
+	}
+	if ks.Snaptime == osnap {
+		t.Fatalf("%s Snaptime did not change after GetIO", ks)
+	}
+	stop(t, tok)
+}
+
+// Because we played a sleazy trick to generate the Mntinfo struct,
+// we test that its size is exactly the same as the C version. While
+// we're here, we test the others as well.
+// These sizes come from cgo. I suppose I could make this itself a
+// cgo file and directly use C.sizeof_, but no, not right now.
+const sizeof_IO = 0x50
+const sizeof_SI = 0x18
+const sizeof_VI = 0x30
+const sizeof_Var = 0x3c
+const sizeof_KM = 0x1ec
+
+func TestStructSizes(t *testing.T) {
+	sz := unsafe.Sizeof(kstat.Mntinfo{})
+	if sz != sizeof_KM {
+		t.Fatalf("Mntinfo has the wrong size: %d vs %d", sz, sizeof_KM)
+	}
+	sz = unsafe.Sizeof(kstat.IO{})
+	if sz != sizeof_IO {
+		t.Fatalf("IO has the wrong size: %d vs %d", sz, sizeof_IO)
+	}
+	sz = unsafe.Sizeof(kstat.Sysinfo{})
+	if sz != sizeof_SI {
+		t.Fatalf("Sysinfo has the wrong size: %d vs %d", sz, sizeof_SI)
+	}
+	sz = unsafe.Sizeof(kstat.Vminfo{})
+	if sz != sizeof_VI {
+		t.Fatalf("Vminfo has the wrong size: %d vs %d", sz, sizeof_VI)
+	}
+	sz = unsafe.Sizeof(kstat.Var{})
+	if sz != sizeof_Var {
+		t.Fatalf("Var has the wrong size: %d vs %d", sz, sizeof_Var)
+	}
 }

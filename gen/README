@@ -1,0 +1,10 @@
+This directory contains files that were used as the starting point to
+generate types_solaris_amd64.go. These were run through cgo -godef and
+then edited, mostly to add comments. The Mntinfo type took significant
+hand editing, both before cgo and after it, but at some point this will be
+worked around/fixed in cgo. See:
+
+	https://github.com/golang/go/issues/5253
+
+Chris Siebenmann
+Aug 28 2015

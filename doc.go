@@ -4,27 +4,31 @@
 // statistics. For more documentation on kstats, see kstat(1) and
 // kstat(3kstat).
 //
-// At the moment this can only retrieve what are called 'named' kstat
-// statistics, although you can see the names and types of other
-// kstats. Fortunately these are the most common and usually the most
-// interesting, although this limit does mean that you can't currently
-// retrieve disk IO stats. (This will change at some point.)
+// The package can retrieve what are called 'named' kstat statistics
+// and IO statistics, which covers almost all kstats you will normally
+// find in the kernel. You can see the names and types of other
+// kstats, but not currently retrieve data for them. Named statistics
+// are the most common type for general information; IO statistics are
+// exported by disks and some other things.
 //
-// General usage: call Open() to obtain a Token, then call GetNamed()
-// on it to obtain Named(s) for specific statistics. Note that this
-// always gives you the very latest value for the statistic. If you
-// want a number of statistics from the same module:inst:name triplet
-// (eg several network counters from the same network interface) and
-// you want them all to have been gathered at the same time, you need
-// to call .Lookup() to obtain a KStat and then repeatedly call its
-// .GetNamed() (this is also slightly more efficient).
+// General usage for named statistics: call Open() to obtain a Token,
+// then call GetNamed() on it to obtain Named(s) for specific
+// statistics. Note that this always gives you the very latest value
+// for the statistic. If you want a number of statistics from the same
+// module:inst:name triplet (eg several network counters from the same
+// network interface) and you want them to all have been gathered at
+// the same time, you need to call .Lookup() to obtain a KStat and
+// then repeatedly call its .GetNamed() (this is also slightly more
+// efficient).
 //
 // The short version: a kstat is a collection of some related
-// statistics, eg disk IO stats for a disk or various network counters
-// for a particular network interface. A Token is a handle for a
-// collection of kstats. You go collection (Token) -> kstat (KStat) ->
-// specific statistic (Named) in order to retrieve the value of a
-// specific statistic.
+// statistics, eg various network counters for a particular network
+// interface. A Token is a handle for a collection of kstats. You go
+// collection (Token) -> kstat (KStat) -> specific statistic (Named)
+// in order to retrieve the value of a specific statistic.
+//
+// (IO stats are retrieved all at once with GetIO(), because they come
+// to us from the kernel as one single struct so that's what you get.)
 //
 // This is a cgo-based package. Cross compilation is up to you.
 // Goroutine safety is in no way guaranteed because the underlying
@@ -47,24 +51,38 @@
 // because we do more memory allocation and deallocation than a C
 // program would (partly because we prioritize not leaking memory).
 //
+//
 // API LIMITATIONS AND TODOS
 //
-// At the moment we don't support anything except named kstats, which
-// are the most common ones. There are generic disk IO stats
-// (kstat_io_t, KSTAT_TYPE_IO) and kstat(1) knows about a number of
-// magic specific raw stats for eg unix:*:sysinfo and unix:*:vminfo
-// that are potentially interesting.
+// Although we support refreshing specific kstats via KStat.Refresh(),
+// we don't support refreshing the entire collection of kstats in
+// order to pick up entirely new kstats and so on.  In other words, we
+// don't support kstat_chain_update(). At the moment you must do this
+// by closing your current Token and opening a new one.
 //
-// (These specific raw stats are listed in cmd/stat/kstat/kstat.h
-// in the ks_raw_lookup array. See cmd/stat/kstat/kstat.c for how
-// they're interpreted.)
+// SUPPORTED AND UNSUPPORTED KSTAT TYPES
 //
-// Although we support refreshing specific kstats via
-// KStat.Refresh(), we don't support refreshing the entire collection
-// of kstats in order to pick up entirely new kstats and so on.  In
-// other words, we don't support kstat_chain_update(). At the moment
-// you must do this by closing your current Token and opening a new
-// one.
+// We support named kstats and IO kstats (KSTAT_TYPE_NAMED and
+// KSTAT_TYPE_IO / kstat_io_t respectively). kstat(1) also knows about
+// a number of magic specific 'raw' stats (which are generally custom
+// C structs); the most useful of these are probably unix:0:sysinfo,
+// unix:0:vminfo, and unix:0:var. We may support those three in the
+// future.
+//
+// In theory kstat supports general timer and interrupt stats. In
+// practice there is no use of KSTAT_TYPE_TIMER in the current Illumos
+// kernel source and very little use of KSTAT_TYPE_INTR (mostly by
+// very old hardware drivers, although the vioif driver uses it too).
+//
+// There are also a few additional KSTAT_TYPE_RAW raw stats; a few are
+// useful and several are effectively obsolete. For various reasons we
+// don't currently support any of them and are unlikely to in the
+// immediate future.  These specific raw stats are listed in
+// cmd/stat/kstat/kstat.h in the ks_raw_lookup array. See
+// cmd/stat/kstat/kstat.c for how they're interpreted.
+//
+// (Really, the only one you might miss is nfs:*:mntinfo, and that's
+// extra work to support due to a current cgo limitation.)
 //
 // Author: Chris Siebenmann
 // https://github.com/siebenmann/go-kstat

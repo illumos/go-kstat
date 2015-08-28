@@ -115,6 +115,9 @@ func (t *Token) Close() error {
 }
 
 // All returns an array of all available KStats.
+//
+// (It has no error return because due to how kstats are implemented,
+// it cannot fail.)
 func (t *Token) All() []*KStat {
 	n := []*KStat{}
 	if t.kc == nil {
@@ -149,9 +152,6 @@ func maybeFree(cs *C.char) {
 // Snaptime.
 //
 // Lookup() corresponds to kstat_lookup() *plus kstat_read()*.
-//
-// Right now you cannot do anything useful with non-named kstats
-// (as we don't provide any way to retrieve their data).
 func (t *Token) Lookup(module string, instance int, name string) (*KStat, error) {
 	if t == nil || t.kc == nil {
 		return nil, errors.New("Token not valid or closed")
@@ -209,7 +209,7 @@ type KSType int
 
 // The different types of data that a KStat may contain, ie these
 // are the value of a KStat.Type. We currently only support getting
-// Named statistics.
+// Named and IO statistics.
 const (
 	RawStat   KSType = C.KSTAT_TYPE_RAW
 	NamedStat KSType = C.KSTAT_TYPE_NAMED
@@ -246,9 +246,7 @@ type KStat struct {
 	// Class is eg 'net' or 'disk'. In kstat(1) it shows up as a
 	// ':class' statistic.
 	Class string
-	// Type is the type of kstat. Named kstats are the only type
-	// that can currently have their kstats data interpreted to
-	// extract the stat values.
+	// Type is the type of kstat.
 	Type KSType
 
 	// Creation time of a kstat in nanoseconds since sometime.
@@ -355,7 +353,33 @@ func (k *KStat) Refresh() error {
 	return nil
 }
 
-// GetNamed obtains a particular named statistic from a kstat.
+// GetIO retrieves the IO statistics data from an IoStat type
+// KStat. It always refreshes the KStat to provide current data.
+//
+// It corresponds to kstat_read() followed by getting a copy of
+// ks_data (which is a kstat_io_t).
+func (k *KStat) GetIO() (*IO, error) {
+	if err := k.Refresh(); err != nil {
+		return nil, err
+	}
+	if k.ksp.ks_type != C.KSTAT_TYPE_IO {
+		return nil, fmt.Errorf("kstat %s (type %d) is not an IO kstat", k, k.ksp.ks_type)
+	}
+
+	// We make our own copy of ks_data (as an IO) so that we don't
+	// point into C-owned memory. 'go tool cgo -godef' apparently
+	// guarantees that the IO struct/type it creates has exactly
+	// the same in-memory layout as the C struct, so we can safely
+	// do this copy and expect to get good results.
+	io := IO{}
+	io = *((*IO)(k.ksp.ks_data))
+	return &io, nil
+}
+
+// GetNamed obtains a particular named statistic from a KStat. It does
+// not refresh the KStat's statistics data, so multiple calls to
+// GetNamed on a single KStat will get a coherent set of statistic
+// values from it.
 //
 // It corresponds to kstat_data_lookup().
 func (k *KStat) GetNamed(name string) (*Named, error) {

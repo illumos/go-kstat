@@ -8,9 +8,9 @@ This package is quite young, so the API may well change as I and
 other people gain experience with using it.
 
 At the moment the API only supports access to what are called 'named'
-kstat statistics. While most Solaris kernel stats are named ones, the
-major exception is disk IO statistics. See the API LIMITATIONS AND TODOS
-section of doc.go for more details (and for other API limitations).
+kstat statistics and IO statistics, which covers almost all kstats but
+leave some potentially interesting ones currently unavailable.  See the
+SUPPORTED AND UNSUPPORTED KSTAT TYPES section of doc.go for more details.
 
 This is a cgo-based package so it can't be cross compiled like a regular
 Go package. It may also have bugs with memory management, since it
