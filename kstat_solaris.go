@@ -7,7 +7,7 @@
 // In an ideal world the package documentation would go here. This is
 // not an ideal world, because any number of tools like godoc choke on
 // Go files that are not for their architecture (although I'll admit
-// it's a hard problem).  So see doc.go for the actual package level
+// it's a hard problem). So see doc.go for the actual package level
 // documentation.
 //
 // However, I refuse to push function level API documentation off to another
@@ -60,6 +60,7 @@ import "C"
 import (
 	"errors"
 	"fmt"
+	"strings"
 	"unsafe"
 )
 
@@ -144,6 +145,29 @@ func maybeFree(cs *C.char) {
 	if cs != nil {
 		C.free(unsafe.Pointer(cs))
 	}
+}
+
+// strndup behaves like the C function; given a *C.char and a len, it
+// returns a string that is up to len characters long at most. We do
+// this slightly inefficiently in order to minimize memory retention
+// for long buffers.
+//
+// strndup() is necessary to copy fields of the type 'char
+// name[SIZE];' where a string of exactly SIZE length will not be
+// null-terminated. GoStringN() will always copy trailing null bytes
+// and other garbage; GoString()'s internal strlen() may run off the
+// end of the 'name' field and either fault or copy too much.
+func strndup(cs *C.char, len int) string {
+	s := C.GoStringN(cs, C.int(len))
+	i := strings.Index(s, "\x00")
+	if i == -1 {
+		// The C string is not null-terminated and the
+		// GoStringN() version is correct and can be returned
+		// as-is.
+		return s
+	}
+	// We know it's null-terminated so we redo this as a C.GoString().
+	return C.GoString(cs)
 }
 
 // Lookup looks up a particular kstat. module and name may be "" and
@@ -279,9 +303,9 @@ func newKStat(tok *Token, ks *C.struct_kstat) *KStat {
 	kst.tok = tok
 
 	kst.Instance = int(ks.ks_instance)
-	kst.Module = C.GoString((*C.char)(unsafe.Pointer(&ks.ks_module)))
-	kst.Name = C.GoString((*C.char)(unsafe.Pointer(&ks.ks_name)))
-	kst.Class = C.GoString((*C.char)(unsafe.Pointer(&ks.ks_class)))
+	kst.Module = strndup((*C.char)(unsafe.Pointer(&ks.ks_module)), C.KSTAT_STRLEN)
+	kst.Name = strndup((*C.char)(unsafe.Pointer(&ks.ks_name)), C.KSTAT_STRLEN)
+	kst.Class = strndup((*C.char)(unsafe.Pointer(&ks.ks_class)), C.KSTAT_STRLEN)
 	kst.Type = KSType(ks.ks_type)
 	kst.Crtime = int64(ks.ks_crtime)
 
@@ -494,7 +518,7 @@ func (tp NamedType) String() string {
 func newNamed(k *KStat, knp *C.struct_kstat_named) *Named {
 	st := Named{}
 	st.KStat = k
-	st.Name = C.GoString((*C.char)(unsafe.Pointer(&knp.name)))
+	st.Name = strndup((*C.char)(unsafe.Pointer(&knp.name)), C.KSTAT_STRLEN)
 	st.Type = NamedType(knp.data_type)
 	st.Snaptime = k.Snaptime
 
@@ -512,9 +536,8 @@ func newNamed(k *KStat, knp *C.struct_kstat_named) *Named {
 		// using it as 128-bit ints or the like.
 		// However I scanned the Illumos kernel source and
 		// everyone using it appears to really be using it for
-		// strings. We'll still bound the length.
-		// (GoStringN does 'up to ...', fortunately.)
-		st.StringVal = C.GoStringN((*C.char)(unsafe.Pointer(&knp.value)), 16)
+		// strings.
+		st.StringVal = strndup((*C.char)(unsafe.Pointer(&knp.value)), 16)
 	case Int32, Int64:
 		st.IntVal = int64(C.get_named_int(knp))
 	case Uint32, Uint64:

@@ -68,6 +68,15 @@ func TestOpenClose(t *testing.T) {
 func TestLookupNamed(t *testing.T) {
 	tok := start(t)
 	ks := lookup(t, tok, "cpu", "sys")
+	// Verify that the kstat has the correct label. This doesn't just
+	// check for us getting the right kstat, it also checks that no
+	// trailing \x00s or other random garbage has wound up in the
+	// fields (since they are actually taken from the kernel data,
+	// not copied from the arguments we gave).
+	if ks.Module != "cpu" || ks.Name != "sys" || ks.Instance != 0 || ks.Class != "misc" {
+		t.Fatalf("cpu:0:sys kstat has bad module/instance/name/class value(s): %#v", ks)
+	}
+
 	n, err := ks.GetNamed("syscall")
 	if err != nil {
 		t.Fatalf("1st getting cpu:-1:sys:syscall failure: %s", err)
@@ -79,6 +88,9 @@ func TestLookupNamed(t *testing.T) {
 	// have a non-zero value.
 	if n.UintVal == 0 || n.StringVal != "" || n.IntVal != 0 {
 		t.Fatalf("%s value fields are not right: %#v", n, n)
+	}
+	if n.Name != "syscall" {
+		t.Fatalf("%s kstat name mismatch: should be \"syscall\", is %q.", ks, n.Name)
 	}
 
 	// Do it directly:
@@ -334,12 +346,22 @@ func getnamed(t *testing.T, tok *kstat.Token, module, name, stat string) *kstat.
 //
 // We assume there will always be a cpu_info:*:cpu_info0 kstat, although
 // maybe there are machines with CPUs but no 0. I wave my hands.
+//
+// We also assume that CPU 0 is online at one point.
 func TestNamedTypes(t *testing.T) {
 	tok := start(t)
 
 	n := getnamed(t, tok, "cpu_info", "cpu_info0", "state")
 	if n.Type != kstat.CharData || n.StringVal == "" || n.UintVal != 0 || n.IntVal != 0 {
 		t.Fatalf("bad type or value for %s %s: %#v", n, n.Type, n)
+	}
+
+	// This test may create false negatives if cpu0 is offline,
+	// but I want a test to verify that the CharData copying code
+	// does not add junk on the end and does copy the whole
+	// string, since I had just such a bug at one point.
+	if n.StringVal != "on-line" {
+		t.Fatalf("bad value for %s: %#v", n, n)
 	}
 
 	n = getnamed(t, tok, "cpu_info", "cpu_info0", "brand")
