@@ -60,7 +60,6 @@ import "C"
 import (
 	"errors"
 	"fmt"
-	"strings"
 	"unsafe"
 )
 
@@ -148,26 +147,19 @@ func maybeFree(cs *C.char) {
 }
 
 // strndup behaves like the C function; given a *C.char and a len, it
-// returns a string that is up to len characters long at most. We do
-// this slightly inefficiently in order to minimize memory retention
-// for long buffers.
+// returns a string that is up to len characters long at most.
+// Shorn of casts, it is:
+//	C.GoStringN(p, C.strnlen(p, len))
 //
 // strndup() is necessary to copy fields of the type 'char
 // name[SIZE];' where a string of exactly SIZE length will not be
 // null-terminated. GoStringN() will always copy trailing null bytes
 // and other garbage; GoString()'s internal strlen() may run off the
 // end of the 'name' field and either fault or copy too much.
-func strndup(cs *C.char, len int) string {
-	s := C.GoStringN(cs, C.int(len))
-	i := strings.IndexByte(s, 0)
-	if i == -1 {
-		// The C string is not null-terminated and the
-		// GoStringN() version is correct and can be returned
-		// as-is.
-		return s
-	}
-	// We know it's null-terminated so we redo this as a C.GoString().
-	return C.GoString(cs)
+func strndup(cs *C.char, len C.size_t) string {
+	// credit: Ian Lance Taylor in
+	// https://github.com/golang/go/issues/12428
+	return C.GoStringN(cs, C.int(C.strnlen(cs, len)))
 }
 
 // Lookup looks up a particular kstat. module and name may be "" and
