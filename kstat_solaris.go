@@ -159,7 +159,7 @@ func maybeFree(cs *C.char) {
 // end of the 'name' field and either fault or copy too much.
 func strndup(cs *C.char, len int) string {
 	s := C.GoStringN(cs, C.int(len))
-	i := strings.Index(s, "\x00")
+	i := strings.IndexByte(s, 0)
 	if i == -1 {
 		// The C string is not null-terminated and the
 		// GoStringN() version is correct and can be returned
