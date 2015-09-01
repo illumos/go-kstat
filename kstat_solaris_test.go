@@ -11,7 +11,6 @@ package kstat_test
 import (
 	"testing"
 	"time"
-	"unsafe"
 
 	"github.com/siebenmann/go-kstat"
 )
@@ -460,38 +459,4 @@ func TestDiskSnaptime(t *testing.T) {
 		t.Fatalf("%s Snaptime did not change after GetIO", ks)
 	}
 	stop(t, tok)
-}
-
-// Because we played a sleazy trick to generate the Mntinfo struct,
-// we test that its size is exactly the same as the C version. While
-// we're here, we test the others as well.
-// These sizes come from cgo. I suppose I could make this itself a
-// cgo file and directly use C.sizeof_, but no, not right now.
-const sizeof_IO = 0x50
-const sizeof_SI = 0x18
-const sizeof_VI = 0x30
-const sizeof_Var = 0x3c
-const sizeof_KM = 0x1ec
-
-func TestStructSizes(t *testing.T) {
-	sz := unsafe.Sizeof(kstat.Mntinfo{})
-	if sz != sizeof_KM {
-		t.Fatalf("Mntinfo has the wrong size: %d vs %d", sz, sizeof_KM)
-	}
-	sz = unsafe.Sizeof(kstat.IO{})
-	if sz != sizeof_IO {
-		t.Fatalf("IO has the wrong size: %d vs %d", sz, sizeof_IO)
-	}
-	sz = unsafe.Sizeof(kstat.Sysinfo{})
-	if sz != sizeof_SI {
-		t.Fatalf("Sysinfo has the wrong size: %d vs %d", sz, sizeof_SI)
-	}
-	sz = unsafe.Sizeof(kstat.Vminfo{})
-	if sz != sizeof_VI {
-		t.Fatalf("Vminfo has the wrong size: %d vs %d", sz, sizeof_VI)
-	}
-	sz = unsafe.Sizeof(kstat.Var{})
-	if sz != sizeof_Var {
-		t.Fatalf("Var has the wrong size: %d vs %d", sz, sizeof_Var)
-	}
 }
