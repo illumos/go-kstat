@@ -4,12 +4,14 @@
 // statistics. For more documentation on kstats, see kstat(1) and
 // kstat(3kstat).
 //
-// The package can retrieve what are called 'named' kstat statistics
-// and IO statistics, which covers almost all kstats you will normally
-// find in the kernel. You can see the names and types of other
-// kstats, but not currently retrieve data for them. Named statistics
-// are the most common type for general information; IO statistics are
-// exported by disks and some other things.
+// The package can retrieve what are called 'named' kstat statistics,
+// IO statistics, and the most common additional types of 'raw'
+// statistics, which covers almost all kstats you will normally find
+// in the kernel. You can see the names and types of other kstats, but
+// not currently retrieve data for them. Named statistics are the most
+// common type for general information; IO statistics are exported by
+// disks and some other things. Supported additional raw kstats are
+// unix:0:sysinfo, unix:0:vminfo, unix:0:var, and mnt:*:mntinfo.
 //
 // General usage for named statistics: call Open() to obtain a Token,
 // then call GetNamed() on it to obtain Named(s) for specific
@@ -51,7 +53,6 @@
 // because we do more memory allocation and deallocation than a C
 // program would (partly because we prioritize not leaking memory).
 //
-//
 // API LIMITATIONS AND TODOS
 //
 // Although we support refreshing specific kstats via KStat.Refresh(),
@@ -65,24 +66,23 @@
 // We support named kstats and IO kstats (KSTAT_TYPE_NAMED and
 // KSTAT_TYPE_IO / kstat_io_t respectively). kstat(1) also knows about
 // a number of magic specific 'raw' stats (which are generally custom
-// C structs); the most useful of these are probably unix:0:sysinfo,
-// unix:0:vminfo, and unix:0:var. We may support those three in the
-// future.
+// C structs); of these we support unix:0:sysinfo, unix:0:vminfo,
+// unix:0:var, and mnt:*:mntinfo for NFS filesystem mounts.
 //
 // In theory kstat supports general timer and interrupt stats. In
 // practice there is no use of KSTAT_TYPE_TIMER in the current Illumos
 // kernel source and very little use of KSTAT_TYPE_INTR (mostly by
 // very old hardware drivers, although the vioif driver uses it too).
+// Since I can't test KSTAT_TYPE_INTR stats, we don't currently
+// support it.
 //
-// There are also a few additional KSTAT_TYPE_RAW raw stats; a few are
-// useful and several are effectively obsolete. For various reasons we
-// don't currently support any of them and are unlikely to in the
-// immediate future.  These specific raw stats are listed in
+// There are also a few additional KSTAT_TYPE_RAW raw stats that we
+// don't support, mostly because they seem to be effectively obsolete.
+// These specific raw stats can be found listed in
 // cmd/stat/kstat/kstat.h in the ks_raw_lookup array. See
-// cmd/stat/kstat/kstat.c for how they're interpreted.
-//
-// (Really, the only one you might miss is nfs:*:mntinfo, and that's
-// extra work to support due to a current cgo limitation.)
+// cmd/stat/kstat/kstat.c for how they're interpreted. If you need
+// access to one of these kstats, the KStat.CopyTo() and KStat.Raw()
+// methods give you an escape hatch to roll your own.
 //
 // Author: Chris Siebenmann
 // https://github.com/siebenmann/go-kstat

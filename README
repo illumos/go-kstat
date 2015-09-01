@@ -2,15 +2,17 @@ Go-kstat provides a Go API for the kstat kernel statistics system
 on Solaris, Illumos, OmniOS, and other Solaris derived systems. For
 general information on kstats, see the kstat(1) and kstat(3kstat)
 manpages. For more documentation on the details of the package, see
-doc.go and kstat_solaris.go.
+doc.go, kstat_solaris.go, types_solaris_amd64.go, and raw_solaris.go.
 
 This package is quite young, so the API may well change as I and
 other people gain experience with using it.
 
-At the moment the API only supports access to what are called 'named'
-kstat statistics and IO statistics, which covers almost all kstats but
-leave some potentially interesting ones currently unavailable.  See the
-SUPPORTED AND UNSUPPORTED KSTAT TYPES section of doc.go for more details.
+The API supports access to 'named' kstat statistics, IO statistics,
+and the most common and useful sorts of 'raw' kstat statistics
+(unix:0:sysinfo, unix:0:vminfo, unix:0:var, and mnt:*:mntinfo).
+Other raw kstat statistics are not explicitly supported, but the
+API provides some escape hatches for access to custom raw
+statistics.
 
 This is a cgo-based package so it can't be cross compiled like a regular
 Go package. It may also have bugs with memory management, since it
