@@ -19,6 +19,11 @@ Go package. It may also have bugs with memory management, since it
 interacts with the Solaris kstat library and holds references to memory
 that's been dynamically allocated in C.
 
+See kstat-godoc.txt for a text dump of the full godoc for the package.
+Unfortunately Go tool limitations appear to make it impossible to see
+full package documentat on anything except a Solaris machine (including
+https://godoc.org/, sadly).
+
 Bug reports and other contributions are highly welcome.
 
 Author:
