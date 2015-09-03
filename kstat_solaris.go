@@ -60,6 +60,7 @@ import "C"
 import (
 	"errors"
 	"fmt"
+	"runtime"
 	"unsafe"
 )
 
@@ -87,6 +88,10 @@ func Open() (*Token, error) {
 	t := Token{}
 	t.kc = r
 	t.ksm = make(map[*C.struct_kstat]*KStat)
+	// A 'func (t *Token) Close()' is equivalent to
+	// 'func Close(t *Token)'. The latter is what SetFinalizer()
+	// needs.
+	runtime.SetFinalizer(&t, (*Token).Close)
 	return &t, nil
 }
 
@@ -103,10 +108,23 @@ func (t *Token) Close() error {
 	if t.kc == nil {
 		return nil
 	}
+
+	// Go through our KStats and null out fields that are no longer
+	// valid. We opt to do this before we actually destroy the memory
+	// KStat.ksp is pointing to by calling kstat_close().
+	for _, v := range t.ksm {
+		v.ksp = nil
+		v.tok = nil
+	}
+
 	res, err := C.kstat_close(t.kc)
 	t.kc = nil
+
 	// clear the map to drop all references to KStats.
 	t.ksm = make(map[*C.struct_kstat]*KStat)
+
+	// cancel finalizer
+	runtime.SetFinalizer(&t, nil)
 
 	if res != 0 {
 		return err

@@ -9,6 +9,7 @@
 package kstat_test
 
 import (
+	"runtime"
 	"testing"
 	"time"
 
@@ -459,4 +460,13 @@ func TestDiskSnaptime(t *testing.T) {
 		t.Fatalf("%s Snaptime did not change after GetIO", ks)
 	}
 	stop(t, tok)
+}
+
+// This tries to test that that our usage of runtime.SetFinalizer()
+// at least doesn't crash when we try to call the finalizer.
+func TestTokenFinalizer(t *testing.T) {
+	tok := start(t)
+	tok = nil
+	runtime.GC()
+	_ = tok
 }
