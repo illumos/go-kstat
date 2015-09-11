@@ -224,6 +224,23 @@ func (k *KStat) Refresh() error
 
 func (k *KStat) String() string
 
+func (k *KStat) Valid() bool
+    Valid returns true if a KStat is still valid after a Token.Update() call
+    has returned true. If a KStat becomes invalid after an update, its
+    fields remain available but you can no longer call methods on it. You
+    may be able to look it up again with token.Lookup(k.Module, k.Instance,
+    k.Name), although it's possible that the module:instance:name now refers
+    to something else. Even if it is still the same thing, there is no
+    continuity in the actual statistics once Valid becomes false; you must
+    restart tracking from scratch.
+
+    (For example, if one disk is removed from the system and another is
+    added, the new disk may use the same module:instance:name as some of the
+    old disk's KStats. Your .Lookup() may succeed, but what you get back is
+    not in any way a continuation of the old disk's information.)
+
+    Valid also returns false after the KStat's token has been closed.
+
 type Mntinfo struct {
     RProto   [128]int8
     Vers     uint32
@@ -379,6 +396,25 @@ func (t *Token) Lookup(module string, instance int, name string) (*KStat, error)
 func (tok *Token) Sysinfo() (*KStat, *Sysinfo, error)
     Sysinfo returns the KStat and the statistics from unix:0:sysinfo. It
     always returns a current, refreshed copy.
+
+func (t *Token) Update() (bool, error)
+    Update synchronizes the Token to the current state of available kernel
+    kstats, returning true if the kernel's list of available kstats changed
+    and false otherwise. If there have been no changes in the kernel's kstat
+    list, all KStats remain valid. If there was a kstat update, some or all
+    of the KStats obtained through the Token may now be invalid. Some of the
+    now-invalid KStats may still exist and be the same thing, but if so they
+    will have to be looked up again.
+
+    (This happens if, for example, a device disappears and then reappears.
+    At the kernel level, the device's kstat is deleted when it disappears
+    and then is recreated when it reappears; the kernel considers the
+    recreated version to be a different kstat, although it has the same
+    module:instance:name. Note that the same module:instance:name still
+    existing does not guarantee that the kstat is for the same thing; one
+    disk might have removed and then an entirely different new disk added.)
+
+    Update corresponds to kstat_chain_update().
 
 func (tok *Token) Var() (*KStat, *Var, error)
     Var returns the KStat and the statistics from unix:0:var. It always

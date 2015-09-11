@@ -470,3 +470,28 @@ func TestTokenFinalizer(t *testing.T) {
 	runtime.GC()
 	_ = tok
 }
+
+// Test that we can at least call .Update() without error and that it
+// fails after a .Close(). Since we can't force the kernel to create
+// or delete kstats, this is the best we can do.
+func TestUpdate(t *testing.T) {
+	tok := start(t)
+	// We assume that unix:0:sysinfo will never disappear in a
+	// kstat chain update.
+	ks := lookup(t, tok, "unix", "sysinfo")
+	_, err := tok.Update()
+	if err != nil {
+		t.Fatalf("token Update() failed: %s", err)
+	}
+	if !ks.Valid() {
+		t.Fatalf("%s invalid after Update()", ks)
+	}
+	stop(t, tok)
+	_, err = tok.Update()
+	if err == nil {
+		t.Fatalf("token Update() succeeded after Close()")
+	}
+	if ks.Valid() {
+		t.Fatalf("%s valid after Close()", ks)
+	}
+}

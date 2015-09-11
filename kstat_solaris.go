@@ -105,7 +105,7 @@ func Open() (*Token, error) {
 //
 // This corresponds to kstat_close().
 func (t *Token) Close() error {
-	if t.kc == nil {
+	if t == nil || t.kc == nil {
 		return nil
 	}
 
@@ -132,13 +132,87 @@ func (t *Token) Close() error {
 	return nil
 }
 
+// Update synchronizes the Token to the current state of available
+// kernel kstats, returning true if the kernel's list of available
+// kstats changed and false otherwise. If there have been no changes
+// in the kernel's kstat list, all KStats remain valid. If there was a
+// kstat update, some or all of the KStats obtained through the Token
+// may now be invalid. Some of the now-invalid KStats may still exist
+// and be the same thing, but if so they will have to be looked up
+// again.
+//
+// (This happens if, for example, a device disappears and then
+// reappears. At the kernel level, the device's kstat is deleted when
+// it disappears and then is recreated when it reappears; the kernel
+// considers the recreated version to be a different kstat, although
+// it has the same module:instance:name. Note that the same
+// module:instance:name still existing does not guarantee that the
+// kstat is for the same thing; one disk might have removed and then
+// an entirely different new disk added.)
+//
+// Update corresponds to kstat_chain_update().
+func (t *Token) Update() (bool, error) {
+	if t == nil || t.kc == nil {
+		return true, errors.New("token is closed")
+	}
+	oid := t.kc.kc_chain_id
+	// NOTE that we can't assume err == nil on success and just
+	// check for err != nil. The error return is set from errno,
+	// and kstat_chain_update() does not guarantee that errno is
+	// 0 if it succeeds.
+	nid, err := C.kstat_chain_update(t.kc)
+	switch {
+	case nid < 0:
+		// We generously assume that if there has been an
+		// error, the chain is intact. Otherwise we should
+		// invalidate all KStats in t.ksm, as in .Close().
+		// assumption: err != nil if n < 0.
+		return false, err
+	case nid == 0:
+		// No change is good news.
+		return false, nil
+	case nid == oid:
+		// Should never be the case, but...
+		return false, fmt.Errorf("new KCID is old KCID: %d", nid)
+	}
+
+	// The simple approach to KStats after a chain update would be
+	// to invalidate all existing KStats. However, we can do
+	// better. kstat_chain_update() implicitly guarantees that it
+	// will not reuse memory addresses of kstat_t structures for
+	// different ones within a single call, so we can walk the
+	// chain and look for addresses that we already know; the
+	// KStats for those addresses are still valid.
+
+	// Copy all valid chain entries that we have in the token ksm
+	// map to a new map and delete them from the old (current) map.
+	nksm := make(map[*C.struct_kstat]*KStat)
+	for r := t.kc.kc_chain; r != nil; r = r.ks_next {
+		if v, ok := t.ksm[r]; ok {
+			nksm[r] = v
+			delete(t.ksm, r)
+		}
+	}
+	// Anything left in t.ksm is an old chain entry that was
+	// removed by kstat_chain_update(). Explicitly zap their
+	// KStat's references to make them invalid.
+	for _, v := range t.ksm {
+		v.ksp = nil
+		v.tok = nil
+	}
+	// Make our new ksm map the current ksm map.
+	t.ksm = nksm
+
+	return true, nil
+}
+
 // All returns an array of all available KStats.
 //
 // (It has no error return because due to how kstats are implemented,
 // it cannot fail.)
 func (t *Token) All() []*KStat {
 	n := []*KStat{}
-	if t.kc == nil {
+	if t == nil || t.kc == nil {
 		return n
 	}
 
@@ -149,7 +223,7 @@ func (t *Token) All() []*KStat {
 }
 
 //
-// allocate a C string for a non-blank string
+// allocate a C string for a non-blank string; otherwise return nil
 func maybeCString(src string) *C.char {
 	if src == "" {
 		return nil
@@ -344,6 +418,9 @@ func (k *KStat) invalid() bool {
 }
 
 // setup does validity checks and setup, such as loading data via Refresh().
+// It applies only to named kstats.
+//
+// TODO: setup() vs prep() is a code smell.
 func (k *KStat) setup() error {
 	if k.invalid() {
 		return errors.New("invalid KStat or closed token")
@@ -364,6 +441,27 @@ func (k *KStat) setup() error {
 
 func (k *KStat) String() string {
 	return fmt.Sprintf("%s:%d:%s (%s)", k.Module, k.Instance, k.Name, k.Class)
+}
+
+// Valid returns true if a KStat is still valid after a Token.Update()
+// call has returned true. If a KStat becomes invalid after an update,
+// its fields remain available but you can no longer call methods on
+// it. You may be able to look it up again with token.Lookup(k.Module,
+// k.Instance, k.Name), although it's possible that the
+// module:instance:name now refers to something else. Even if it is
+// still the same thing, there is no continuity in the actual
+// statistics once Valid becomes false; you must restart tracking from
+// scratch.
+//
+// (For example, if one disk is removed from the system and another is
+// added, the new disk may use the same module:instance:name as some
+// of the old disk's KStats. Your .Lookup() may succeed, but what you
+// get back is not in any way a continuation of the old disk's
+// information.)
+//
+// Valid also returns false after the KStat's token has been closed.
+func (k *KStat) Valid() bool {
+	return !k.invalid()
 }
 
 // Refresh the statistics data for a KStat.

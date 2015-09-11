@@ -105,6 +105,28 @@ func main() {
 	allNamed(t)
 	fmt.Println("")
 
+	// Try updating things.
+	fmt.Print("Hit return when ready to do a .Update(): ")
+	var input string
+	fmt.Scanln(&input)
+	all := tok.All()
+	upd, err := tok.Update()
+	if err != nil {
+		log.Fatal("Update error: ", err)
+	}
+	fmt.Printf("Update status: %v\n", upd)
+	for _, r := range all {
+		if !r.Valid() {
+			nr, err := tok.Lookup(r.Module, r.Instance, r.Name)
+			if err == nil {
+				fmt.Printf("could refresh: %s\n", nr)
+			} else {
+				fmt.Printf("disappeared: %s\n", r)
+			}
+		}
+	}
+	fmt.Println()
+
 	err = tok.Close()
 	if err != nil {
 		log.Fatal("error on token close: ", err)
