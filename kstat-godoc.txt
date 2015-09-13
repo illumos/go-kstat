@@ -57,15 +57,6 @@ package kstat
     (partly because we prioritize not leaking memory).
 
 
-    API LIMITATIONS AND TODOS
-
-    Although we support refreshing specific kstats via KStat.Refresh(), we
-    don't support refreshing the entire collection of kstats in order to
-    pick up entirely new kstats and so on. In other words, we don't support
-    kstat_chain_update(). At the moment you must do this by closing your
-    current Token and opening a new one.
-
-
     SUPPORTED AND UNSUPPORTED KSTAT TYPES
 
     We support named kstats and IO kstats (KSTAT_TYPE_NAMED and
