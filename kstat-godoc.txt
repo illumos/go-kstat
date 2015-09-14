@@ -73,11 +73,15 @@ package kstat
 
     There are also a few additional KSTAT_TYPE_RAW raw stats that we don't
     support, mostly because they seem to be effectively obsolete. These
-    specific raw stats can be found listed in cmd/stat/kstat/kstat.h in the
-    ks_raw_lookup array. See cmd/stat/kstat/kstat.c for how they're
-    interpreted. If you need access to one of these kstats, the
-    KStat.CopyTo() and KStat.Raw() methods give you an escape hatch to roll
-    your own.
+    specific raw stats can be found listed in the Illumos source code in
+    cmd/stat/kstat/kstat.h in the ks_raw_lookup array. See
+    cmd/stat/kstat/kstat.c for how they're interpreted. If you need access
+    to one of these kstats, the KStat.CopyTo() and KStat.Raw() methods give
+    you an escape hatch to roll your own. You'll probably need to use cgo to
+    generate an appropriate Go struct that matches the C struct you need. My
+    notes on this process may be helpful:
+
+    https://utcc.utoronto.ca/~cks/space/blog/programming/GoCGoCompatibleStructs
 
     Author: Chris Siebenmann https://github.com/siebenmann/go-kstat
 
